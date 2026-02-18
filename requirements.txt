@@ -1,0 +1,6 @@
+pyTelegramBotAPI
+deep-translator
+gTTS
+Flask
+google-generativeai
+gunicorn
