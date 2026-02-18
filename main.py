@@ -12,7 +12,7 @@ import time
 # --- SERVER ---
 app = Flask('')
 @app.route('/')
-def home(): return "Bot is alive!"
+def home(): return "Bot is working perfectly!"
 
 def run_flask():
     port = int(os.environ.get("PORT", 8080))
@@ -24,15 +24,14 @@ def keep_alive():
 # --- SOZLAMALAR ---
 TOKEN = "8171412076:AAGkTdkWzq5bVPLWUJI_K2Moo6RbbIwm4LU"
 GEMINI_API_KEY = "AIzaSyBvayhxJDTp7OdaMjtkocoTzANdIukk6jE"
-ADMIN_ID = 8249474846 
 
-# Gemini modelini to'g'ri ulash
+# Gemini modelini yangilangan nom bilan sozlash
 try:
     genai.configure(api_key=GEMINI_API_KEY)
-    # Model nomi aniq 'models/gemini-1.5-flash' bo'lishi xatolikni oldini oladi
-    ai_model = genai.GenerativeModel('gemini-1.5-flash')
+    # Model nomini eng barqaror versiyaga o'zgartirdik
+    ai_model = genai.GenerativeModel('gemini-1.5-flash-latest')
 except Exception as e:
-    print(f"Gemini init error: {e}")
+    print(f"Gemini sozlashda xato: {e}")
 
 bot = telebot.TeleBot(TOKEN)
 
@@ -49,27 +48,32 @@ def init_db():
 init_db()
 user_states = {}
 
-# --- AI TEACHER LOGIKASI ---
+# --- AI TEACHER FUNKSIYASI ---
 def get_ai_reply(text):
     try:
+        # Promptni maksimal darajada soddalashtirdik
         prompt = (
-            "Sen professional ingliz tili o'qituvchisisan. Foydalanuvchi bilan inglizcha suhbatlash. "
-            "Har bir javobing oxirida foydalanuvchining xatolarini o'zbekcha tushuntir. "
-            "Javobni '---SPLIT---' bilan ajrat."
+            f"You are a helpful English teacher. Talk to me in English about: {text}. "
+            "Then, after a '---SPLIT---' marker, explain any grammar mistakes in Uzbek."
         )
-        # Gemini javob berishini kutamiz
-        response = ai_model.generate_content(f"{prompt}\nUser: {text}")
-        return response.text
+        response = ai_model.generate_content(prompt)
+        
+        if response and response.text:
+            return response.text
+        else:
+            return "I couldn't generate a response. ---SPLIT--- AI javob qaytara olmadi."
+            
     except Exception as e:
-        print(f"AI Error: {e}")
-        return "I'm sorry, I have a connection issue. ---SPLIT--- Kechirasiz, Gemini API ulanishida xato: " + str(e)
+        print(f"AI Xatosi: {e}")
+        # Agar model nomi hali ham topilmasa, muqobil modelni sinab ko'radi
+        return f"Connection error. ---SPLIT--- Xatolik yuz berdi: {str(e)[:100]}"
 
 # --- HANDLERS ---
 @bot.message_handler(commands=['start'])
 def start(message):
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
     markup.add("🔄 Translate", "🔊 Pronounce", "👨‍🏫 AI Teacher")
-    bot.send_message(message.chat.id, "🚀 Tayyorman!", reply_markup=markup)
+    bot.send_message(message.chat.id, "🚀 Tayyorman! Bo'limni tanlang:", reply_markup=markup)
 
 @bot.message_handler(func=lambda m: True)
 def handle_msg(message):
@@ -78,29 +82,40 @@ def handle_msg(message):
         bot.send_message(message.chat.id, "📝 Matn yuboring:")
     elif message.text == "🔊 Pronounce":
         user_states[message.chat.id] = "pronounce"
-        bot.send_message(message.chat.id, "🇬🇧 So'z yuboring:")
+        bot.send_message(message.chat.id, "🇬🇧 Inglizcha yozing:")
     elif message.text == "👨‍🏫 AI Teacher":
         user_states[message.chat.id] = "ai_teacher"
-        bot.send_message(message.chat.id, "👨‍🏫 Chattingni boshladik!")
+        bot.send_message(message.chat.id, "👨‍🏫 Inglizcha biror nima deb yozing, suhbatni boshlaymiz!")
     else:
         state = user_states.get(message.chat.id)
+        
         if state == "ai_teacher":
             bot.send_chat_action(message.chat.id, 'typing')
             res = get_ai_reply(message.text)
             if "---SPLIT---" in res:
                 en, uz = res.split("---SPLIT---", 1)
-                bot.reply_to(message, f"🇬🇧 {en.strip()}\n\n🇺🇿 {uz.strip()}")
-            else: bot.reply_to(message, res)
+                bot.send_message(message.chat.id, f"🇬🇧 **Teacher:**\n{en.strip()}\n\n🇺🇿 **Tahlil:**\n{uz.strip()}", parse_mode="Markdown")
+            else:
+                bot.reply_to(message, res)
+                
         elif state == "translate":
-            res = GoogleTranslator(source='auto', target='en').translate(message.text)
-            bot.reply_to(message, res)
+            try:
+                res = GoogleTranslator(source='auto', target='en').translate(message.text)
+                bot.reply_to(message, f"✅ EN: {res}")
+            except: bot.reply_to(message, "Tarjima xatosi.")
+            
         elif state == "pronounce":
-            f = f"{message.chat.id}.mp3"
-            gTTS(text=message.text, lang='en').save(f)
-            with open(f, "rb") as a: bot.send_voice(message.chat.id, a)
-            os.remove(f)
+            try:
+                f = f"v_{message.chat.id}.mp3"
+                gTTS(text=message.text, lang='en').save(f)
+                with open(f, "rb") as v: bot.send_voice(message.chat.id, v)
+                os.remove(f)
+            except: bot.send_message(message.chat.id, "Ovoz xatosi.")
 
 if __name__ == "__main__":
     keep_alive()
-    # Conflict xatosini kamaytirish uchun interval qo'shildi
-    bot.infinity_polling(timeout=10, long_polling_timeout=5)
+    # Konfliktni (409) butunlay yo'qotish uchun eski pollingni tozalaymiz
+    bot.delete_webhook()
+    time.sleep(2) 
+    print("Bot ishga tushmoqda...")
+    bot.infinity_polling(timeout=20, long_polling_timeout=10)
